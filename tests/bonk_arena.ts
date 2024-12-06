@@ -5,12 +5,16 @@ import { TestToken } from "../target/types/test_token";
 import { PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, createAssociatedTokenAccount, getAssociatedTokenAddress } from "@solana/spl-token";
 import { expect } from 'chai';
+import * as dotenv from "dotenv";
+import { keccak_256 } from "js-sha3";
+
+dotenv.config();
 
 describe("bonk_arena", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const gameProgram = anchor.workspace.SolanaGameLeaderboard as Program<SolanaGameLeaderboard>;
+  const gameProgram = anchor.workspace.BonkArena as Program<BonkArena>;
   const tokenProgram = anchor.workspace.TestToken as Program<TestToken>;
 
   // 测试代币相关
@@ -45,9 +49,11 @@ describe("bonk_arena", () => {
         authority.publicKey
       );
 
+      const payer = (provider.wallet as anchor.Wallet).payer;
+
       await createAssociatedTokenAccount(
         provider.connection,
-        provider.wallet.payer,
+        payer,
         mintKeypair.publicKey,
         authority.publicKey
       );
@@ -73,7 +79,7 @@ describe("bonk_arena", () => {
 
       await createAssociatedTokenAccount(
         provider.connection,
-        provider.wallet.payer,
+        payer,
         mintKeypair.publicKey,
         leaderboardKeypair.publicKey
       );
@@ -268,10 +274,25 @@ describe("bonk_arena", () => {
       // 等待交易确认
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // 2. 提交分数
+      // 2. 获取游戏会话数据和链上密钥
       const gameSession = await gameProgram.account.gameSession.fetch(gameSessionPda);
+      const leaderboard = await gameProgram.account.leaderboard.fetch(leaderboardKeypair.publicKey);
+      
+      // 计算游戏密钥 - 使用与链上相同的数据格式
+      const timestampBuffer = Buffer.alloc(8);
+      timestampBuffer.writeBigInt64LE(BigInt(gameSession.startTime));
+
+      const dataToHash = Buffer.concat([
+        authority.publicKey.toBuffer(),
+        timestampBuffer,
+        Buffer.from(leaderboard.secretKey)
+      ]);
+      
+      const calculatedGameKey = Buffer.from(keccak_256.arrayBuffer(dataToHash));
+
+      // 提交分数
       await gameProgram.methods
-        .logScore(200, Array.from(gameSession.gameKey))
+        .logScore(200, Array.from(calculatedGameKey))
         .accounts({
           leaderboard: leaderboardKeypair.publicKey,
           gameSession: gameSessionPda,
@@ -301,6 +322,101 @@ describe("bonk_arena", () => {
 
     } catch (error) {
       console.error("Complete game flow error:", error);
+      throw error;
+    }
+  });
+
+  it("Can start game", async () => {
+    try {
+      // 1. 从环境变量读取密钥
+      const gameSecretKey = process.env.GAME_SECRET_KEY;
+      if (!gameSecretKey) {
+        throw new Error("GAME_SECRET_KEY not found in environment variables");
+      }
+
+      // 将密钥字符串转换为 Uint8Array
+      const secretKeyBytes = new TextEncoder().encode(gameSecretKey);
+      const secretKeyArray = new Uint8Array(32);
+      secretKeyArray.set(secretKeyBytes.slice(0, 32));
+
+      // 设置密钥
+      await gameProgram.methods
+        .setSecretKey(Array.from(secretKeyArray))
+        .accounts({
+          leaderboard: leaderboardKeypair.publicKey,
+        })
+        .rpc();
+
+      // 2. 获取游戏会话 PDA
+      const [gameSessionPda] = await PublicKey.findProgramAddress(
+        [
+          Buffer.from("player_session"),
+          authority.publicKey.toBuffer(),
+        ],
+        gameProgram.programId
+      );
+
+      // 3. 获取玩家代币账户
+      const payerTokenAccount = await getAssociatedTokenAddress(
+        mintKeypair.publicKey,
+        authority.publicKey
+      );
+
+      // 4. 开始新游戏
+      await gameProgram.methods
+        .startGame("P3")
+        .accounts({
+          leaderboard: leaderboardKeypair.publicKey,
+          gameSession: gameSessionPda,
+          payerTokenAccount: payerTokenAccount,
+          tokenPool: tokenPool,
+          tokenMint: mintKeypair.publicKey,
+          payer: authority.publicKey,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      // 等待交易确认
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 5. 获取游戏会话数据和链上密钥
+      const gameSession = await gameProgram.account.gameSession.fetch(gameSessionPda);
+      
+      // 6. 在客户端计算游戏密钥
+      const timestampBuffer = Buffer.alloc(8);
+      timestampBuffer.writeBigInt64LE(BigInt(gameSession.startTime));
+
+      const dataToHash = Buffer.concat([
+        authority.publicKey.toBuffer(),
+        timestampBuffer,
+        secretKeyArray
+      ]);
+      
+      const calculatedGameKey = Buffer.from(keccak_256.arrayBuffer(dataToHash));
+      
+      // 7. 提交分数
+      await gameProgram.methods
+        .logScore(300, Array.from(calculatedGameKey))
+        .accounts({
+          leaderboard: leaderboardKeypair.publicKey,
+          gameSession: gameSessionPda,
+          payer: authority.publicKey,
+        })
+        .rpc();
+
+      // 8. 验证分数已记录
+      const leaderboardAccount = await gameProgram.account.leaderboard.fetch(
+        leaderboardKeypair.publicKey
+      );
+      
+      const playerEntry = leaderboardAccount.players.find(
+        p => p.name === "Player: P3" && p.score === 300
+      );
+      expect(playerEntry).to.exist;
+
+    } catch (error) {
+      console.error("Can start game error:", error);
       throw error;
     }
   });

@@ -2,11 +2,66 @@
 // single deploy script that's invoked from the CLI, injecting a provider
 // configured from the workspace's Anchor.toml.
 
-const anchor = require("@coral-xyz/anchor");
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { BonkArena } from "../target/types/bonk_arena";
+import * as dotenv from "dotenv";
 
-module.exports = async function (provider) {
-  // Configure client to use the provider.
+dotenv.config();
+
+export async function deployProgram() {
+  const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  // Add your deploy script here.
-};
+  const program = anchor.workspace.BonkArena as Program<BonkArena>;
+
+  // 从环境变量读取密钥
+  const gameSecretKey = process.env.GAME_SECRET_KEY;
+  if (!gameSecretKey) {
+    throw new Error("GAME_SECRET_KEY not found in environment variables");
+  }
+
+  // 将字符串转换为 Uint8Array (32 bytes)
+  const secretKeyBytes = new TextEncoder().encode(gameSecretKey);
+  const secretKeyArray = new Uint8Array(32);
+  secretKeyArray.set(secretKeyBytes.slice(0, 32));
+
+  try {
+    // 初始化程序
+    await program.methods
+      .initialize(
+        new anchor.BN(1000000), // entry_fee
+        70, // prize_ratio
+        30, // commission_ratio
+        [50, 30, 20], // prize_distribution
+      )
+      .accounts({
+        // ... 账户配置
+      })
+      .rpc();
+
+    // 设置密钥
+    await program.methods
+      .setSecretKey(Array.from(secretKeyArray))
+      .accounts({
+        leaderboard: program.programId,
+      })
+      .rpc();
+
+    console.log("Program deployed successfully with secret key");
+  } catch (error) {
+    console.error("Deployment failed:", error);
+    throw error;
+  }
+}
+
+// 如果直接运行此脚本
+if (require.main === module) {
+  deployProgram().then(
+    () => process.exit(0),
+    (err) => {
+      console.error(err);
+      process.exit(1);
+    }
+  );
+}

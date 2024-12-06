@@ -102,19 +102,10 @@ pub mod bonk_arena {
         leaderboard.prize_pool += prize_addition;
         leaderboard.commission_pool += commission_addition;
 
-        // 生成游戏密钥
         let clock = Clock::get()?;
-        let game_key = solana_program::keccak::hashv(&[
-            payer.key().as_ref(),
-            clock.unix_timestamp.to_le_bytes().as_ref(),
-            leaderboard.secret_key.as_ref(),
-        ]);
-
-        // 初始化游戏会话
         game_session.player_address = payer.key();
         game_session.name = name;
         game_session.start_time = clock.unix_timestamp;
-        game_session.game_key = game_key.to_bytes();
         game_session.game_completed = false;
         game_session.bump = ctx.bumps.game_session;
 
@@ -136,8 +127,15 @@ pub mod bonk_arena {
             return Err(ErrorCode::GameExpired.into());
         }
 
+        // 计算预期的游戏密钥
+        let expected_game_key = solana_program::keccak::hashv(&[
+            game_session.player_address.as_ref(),
+            game_session.start_time.to_le_bytes().as_ref(),
+            leaderboard.secret_key.as_ref(),
+        ]);
+
         // 验证游戏密钥
-        if game_session.game_key != submitted_game_key {
+        if expected_game_key.to_bytes() != submitted_game_key {
             game_session.game_completed = true;
             return Err(ErrorCode::InvalidGameKey.into());
         }
@@ -234,7 +232,6 @@ pub struct GameSession {
     pub player_address: Pubkey,    // 玩家地址
     pub name: String,              // 玩家名称
     pub start_time: i64,           // 开始时间
-    pub game_key: [u8; 32],        // 游戏密钥
     pub game_completed: bool,      // 游戏是否完成
     pub bump: u8,                  // PDA bump
 }
