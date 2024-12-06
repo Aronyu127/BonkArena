@@ -7,7 +7,7 @@ declare_id!("6v21kxAmupFVoPcVFhYAvS65KAFkYrNWYdyLBzzAjhj");
 pub mod test_token {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
+    pub fn initialize(_ctx: Context<Initialize>) -> Result<()> {
         Ok(())
     }
 

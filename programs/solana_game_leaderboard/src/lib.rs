@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount};
-use anchor_spl::associated_token::AssociatedToken;
 
 declare_id!("CimnUFrTgq9DoGx9peefTU2bRvkQSMLwra8ZgexZ1WQG");
 
@@ -103,7 +102,7 @@ pub mod solana_game_leaderboard {
         leaderboard.prize_pool += prize_addition;
         leaderboard.commission_pool += commission_addition;
 
-        // 生成游戏密钥（只存储在合约中）
+        // 生成游戏密钥
         let clock = Clock::get()?;
         let game_key = solana_program::keccak::hashv(&[
             payer.key().as_ref(),
@@ -175,16 +174,11 @@ pub mod solana_game_leaderboard {
         leaderboard.prize_pool = 0;
         Ok(())
     }
-}
 
-// 工具函数：更新排行榜
-fn update_leaderboard(leaderboard: &mut Account<Leaderboard>, player: Player) -> Result<()> {
-    leaderboard.players.push(player);
-    leaderboard.players.sort_by(|a, b| b.score.cmp(&a.score)); // 由高到低排序
-    if leaderboard.players.len() > 10 {
-        leaderboard.players.pop(); // 移除最后一名
+    pub fn get_leaderboard(ctx: Context<GetLeaderboard>) -> Result<Vec<Player>> {
+        let leaderboard = &ctx.accounts.leaderboard;
+        Ok(leaderboard.players.clone())
     }
-    Ok(())
 }
 
 // 工具函数：分配奖金
@@ -197,17 +191,17 @@ fn distribute_prizes(leaderboard: &mut Account<Leaderboard>) -> Result<()> {
     
     // 分配奖金给实际获奖玩家
     for i in 0..winner_count {
-        let prize = total_prize * prize_distribution[i] as u64 / 100;
-        // 奖金转账逻辑给玩家
+        let _prize = total_prize * prize_distribution[i] as u64 / 100;
+        // TODO: 奖金转账逻辑给玩家
     }
     
     // 如果获奖玩家少于3名，剩余奖金转给合约拥有者
     if winner_count < 3 {
-        let mut remaining_prize = 0;
+        let mut _remaining_prize = 0;
         for i in winner_count..3 {
-            remaining_prize += total_prize * prize_distribution[i] as u64 / 100;
+            _remaining_prize += total_prize * prize_distribution[i] as u64 / 100;
         }
-        // 将剩余奖金转给合约拥有者
+        // TODO: 将剩余奖金转给合约拥有者
     }
     
     Ok(())
@@ -272,7 +266,7 @@ pub struct StartGame<'info> {
     #[account(mut)]
     pub leaderboard: Account<'info, Leaderboard>,
     #[account(
-        init,
+        init_if_needed,
         payer = payer,
         space = 8 + 32 + 50 + 8 + 32 + 1 + 1,
         seeds = [b"player_session", payer.key().as_ref()],
@@ -328,5 +322,10 @@ pub struct LogScore<'info> {
 #[derive(Accounts)]
 pub struct SetSecretKey<'info> {
     #[account(mut)]
+    pub leaderboard: Account<'info, Leaderboard>,
+}
+
+#[derive(Accounts)]
+pub struct GetLeaderboard<'info> {
     pub leaderboard: Account<'info, Leaderboard>,
 }

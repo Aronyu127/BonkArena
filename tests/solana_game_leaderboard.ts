@@ -4,6 +4,7 @@ import { SolanaGameLeaderboard } from "../target/types/solana_game_leaderboard";
 import { TestToken } from "../target/types/test_token";
 import { PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, createAssociatedTokenAccount, getAssociatedTokenAddress } from "@solana/spl-token";
+import { expect } from 'chai';
 
 describe("solana_game_leaderboard", () => {
   const provider = anchor.AnchorProvider.env();
@@ -192,6 +193,114 @@ describe("solana_game_leaderboard", () => {
         .rpc();
     } catch (error) {
       console.error("End game error:", error);
+      throw error;
+    }
+  });
+
+  it("Get leaderboard", async () => {
+    try {
+      // 获取排行榜数据
+      const leaderboardAccount = await gameProgram.account.leaderboard.fetch(
+        leaderboardKeypair.publicKey
+      );
+
+      console.log("Current Leaderboard:");
+      console.log("Players:", leaderboardAccount.players);
+      console.log("Prize Pool:", leaderboardAccount.prizePool?.toString());
+      console.log("Commission Pool:", leaderboardAccount.commissionPool?.toString());
+
+      // 验证排行榜数据
+      expect(Array.isArray(leaderboardAccount.players)).to.be.true;
+      
+      // 如果有玩家记录，验证玩家数据结构
+      if (leaderboardAccount.players.length > 0) {
+        const player = leaderboardAccount.players[0];
+        expect(player).to.have.property('address');
+        expect(player).to.have.property('score');
+        expect(player).to.have.property('name');
+      }
+
+      // 验证排行榜是否按分数排序
+      const scores = leaderboardAccount.players.map(p => p.score);
+      const sortedScores = [...scores].sort((a, b) => b - a);
+      expect(scores).to.deep.equal(sortedScores);
+
+      // 验证排行榜最多只有10名玩家
+      expect(leaderboardAccount.players.length).to.be.lte(10);
+
+    } catch (error) {
+      console.error("Get leaderboard error:", error);
+      throw error;
+    }
+  });
+
+  it("Complete game flow with leaderboard update", async () => {
+    try {
+      // 1. 开始游戏
+      const [gameSessionPda] = await PublicKey.findProgramAddress(
+        [
+          Buffer.from("player_session"),
+          authority.publicKey.toBuffer(),
+        ],
+        gameProgram.programId
+      );
+
+      const payerTokenAccount = await getAssociatedTokenAddress(
+        mintKeypair.publicKey,
+        authority.publicKey
+      );
+
+      // 直接开始新游戏
+      await gameProgram.methods
+        .startGame("Player2")
+        .accounts({
+          leaderboard: leaderboardKeypair.publicKey,
+          gameSession: gameSessionPda,
+          payerTokenAccount: payerTokenAccount,
+          tokenPool: tokenPool,
+          tokenMint: mintKeypair.publicKey,
+          payer: authority.publicKey,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      // 等待交易确认
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 2. 提交分数
+      const gameSession = await gameProgram.account.gameSession.fetch(gameSessionPda);
+      await gameProgram.methods
+        .logScore(200, Array.from(gameSession.gameKey))
+        .accounts({
+          leaderboard: leaderboardKeypair.publicKey,
+          gameSession: gameSessionPda,
+          payer: authority.publicKey,
+        })
+        .rpc();
+
+      // 等待交易确认
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 3. 验证排行榜更新
+      const leaderboardAccount = await gameProgram.account.leaderboard.fetch(
+        leaderboardKeypair.publicKey
+      );
+
+      // 验证新分数是否被记录
+      const hasScore = leaderboardAccount.players.some(
+        player => 
+          player.score === 200 && 
+          player.name === "Player: Player2"
+      );
+      expect(hasScore).to.be.true;
+
+      // 验证排序
+      const scores = leaderboardAccount.players.map(p => p.score);
+      expect(scores).to.deep.equal([...scores].sort((a, b) => b - a));
+
+    } catch (error) {
+      console.error("Complete game flow error:", error);
       throw error;
     }
   });
