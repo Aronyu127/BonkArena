@@ -177,6 +177,28 @@ pub mod bonk_arena {
         let leaderboard = &ctx.accounts.leaderboard;
         Ok(leaderboard.players.clone())
     }
+
+    pub fn add_prize_pool(ctx: Context<AddPrizePool>, amount: u64) -> Result<()> {
+        let leaderboard = &mut ctx.accounts.leaderboard;
+        
+        // 转移代币到奖金池
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                token::Transfer {
+                    from: ctx.accounts.contributor_token_account.to_account_info(),
+                    to: ctx.accounts.token_pool.to_account_info(),
+                    authority: ctx.accounts.contributor.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        // 更新奖金池金额
+        leaderboard.prize_pool += amount;
+        
+        Ok(())
+    }
 }
 
 // 工具函数：分配奖金
@@ -325,4 +347,25 @@ pub struct SetSecretKey<'info> {
 #[derive(Accounts)]
 pub struct GetLeaderboard<'info> {
     pub leaderboard: Account<'info, Leaderboard>,
+}
+
+#[derive(Accounts)]
+pub struct AddPrizePool<'info> {
+    #[account(mut)]
+    pub leaderboard: Account<'info, Leaderboard>,
+    #[account(
+        mut,
+        token::mint = leaderboard.token_mint,
+        token::authority = contributor
+    )]
+    pub contributor_token_account: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        address = leaderboard.token_pool,
+        token::mint = leaderboard.token_mint,
+    )]
+    pub token_pool: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub contributor: Signer<'info>,
+    pub token_program: Program<'info, Token>,
 }

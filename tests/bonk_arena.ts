@@ -420,4 +420,83 @@ describe("bonk_arena", () => {
       throw error;
     }
   });
+
+  it("Can add tokens to prize pool", async () => {
+    try {
+        // 准备测试用户的代币账户
+        const contributor = anchor.web3.Keypair.generate();
+        
+        // 先给贡献者足够的 SOL
+        const signature = await provider.connection.requestAirdrop(
+            contributor.publicKey,
+            2 * anchor.web3.LAMPORTS_PER_SOL
+        );
+        await provider.connection.confirmTransaction(signature);
+
+        // 为测试用户创建代币账户
+        const contributorTokenAccount = await getAssociatedTokenAddress(
+            mintKeypair.publicKey,
+            contributor.publicKey
+        );
+
+        // 创建代币账户
+        const payer = (provider.wallet as anchor.Wallet).payer;
+        await createAssociatedTokenAccount(
+            provider.connection,
+            payer,
+            mintKeypair.publicKey,
+            contributor.publicKey
+        );
+
+        // 从主账户铸造代币给贡献者
+        const mintAmount = new anchor.BN(1_000_000);
+        await tokenProgram.methods
+            .mintTokens(mintAmount)
+            .accounts({
+                mint: mintKeypair.publicKey,
+                tokenAccount: contributorTokenAccount,
+                authority: authority.publicKey,
+                tokenProgram: TOKEN_PROGRAM_ID,
+            })
+            .rpc();
+
+        // 等待交易确认
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // 记录添加前的奖金池金额
+        const beforePrizePool = (await gameProgram.account.leaderboard.fetch(
+            leaderboardKeypair.publicKey
+        )).prizePool;
+
+        // 添加代币到奖金池
+        const addAmount = new anchor.BN(500_000);
+        await gameProgram.methods
+            .addPrizePool(addAmount)
+            .accounts({
+                leaderboard: leaderboardKeypair.publicKey,
+                contributorTokenAccount: contributorTokenAccount,
+                tokenPool: tokenPool,
+                contributor: contributor.publicKey,
+                tokenProgram: TOKEN_PROGRAM_ID,
+            })
+            .signers([contributor])
+            .rpc();
+
+        // 等待交易确认
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // 验证奖金池金额是否正确增加
+        const afterPrizePool = (await gameProgram.account.leaderboard.fetch(
+            leaderboardKeypair.publicKey
+        )).prizePool;
+        
+        expect(afterPrizePool.toNumber()).to.equal(
+            beforePrizePool.toNumber() + addAmount.toNumber()
+        );
+
+    } catch (error) {
+        console.error("Add prize pool error:", error);
+        throw error;
+    }
+  });
 });
