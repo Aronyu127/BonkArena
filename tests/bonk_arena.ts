@@ -113,13 +113,42 @@ describe("bonk_arena", () => {
 
   it("Set secret key", async () => {
     try {
-      const secretKey = new Uint8Array(32).fill(1); // 示例密钥
+      // 创建一个非所有者用户尝试设置密钥
+      const nonOwner = anchor.web3.Keypair.generate();
+      const signature = await provider.connection.requestAirdrop(
+        nonOwner.publicKey,
+        2 * anchor.web3.LAMPORTS_PER_SOL
+      );
+      await provider.connection.confirmTransaction(signature);
+
+      const secretKey = new Uint8Array(32).fill(1);
+      
+      // 非所有者尝试设置密钥(应该失败)
+      try {
+        await gameProgram.methods
+          .setSecretKey(Array.from(secretKey))
+          .accounts({
+            leaderboard: leaderboardKeypair.publicKey,
+            owner: nonOwner.publicKey,
+            authority: authority.publicKey,
+          })
+          .signers([nonOwner])
+          .rpc();
+        expect.fail("Expected an error");
+      } catch (error) {
+        expect(error.toString()).to.include("Unauthorized");
+      }
+
+      // 所有者设置密钥(应该成功)
       await gameProgram.methods
         .setSecretKey(Array.from(secretKey))
         .accounts({
           leaderboard: leaderboardKeypair.publicKey,
+          owner: authority.publicKey,
+          authority: authority.publicKey,
         })
         .rpc();
+
     } catch (error) {
       console.error("Set secret key error:", error);
       throw error;
@@ -339,11 +368,13 @@ describe("bonk_arena", () => {
       const secretKeyArray = new Uint8Array(32);
       secretKeyArray.set(secretKeyBytes.slice(0, 32));
 
-      // 设置密钥
+      // 设置密钥 (使用正确的所有者账户)
       await gameProgram.methods
         .setSecretKey(Array.from(secretKeyArray))
         .accounts({
           leaderboard: leaderboardKeypair.publicKey,
+          owner: authority.publicKey,  // 使用正确的所有者账户
+          authority: authority.publicKey,
         })
         .rpc();
 
@@ -468,7 +499,7 @@ describe("bonk_arena", () => {
             leaderboardKeypair.publicKey
         )).prizePool;
 
-        // 添加代币到奖金池
+        // 添加代币到奖金��
         const addAmount = new anchor.BN(500_000);
         await gameProgram.methods
             .addPrizePool(addAmount)

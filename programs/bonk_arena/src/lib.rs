@@ -6,22 +6,24 @@ declare_id!("CimnUFrTgq9DoGx9peefTU2bRvkQSMLwra8ZgexZ1WQG");
 #[error_code]
 pub enum ErrorCode {
     #[msg("Game already started for this player.")]
-        GameAlreadyStarted,
-        #[msg("Game not started.")]
-        GameNotStarted,
-        #[msg("Game session expired.")]
-        GameExpired,
-        #[msg("Invalid game key.")]
-        InvalidGameKey,
-        #[msg("Score already logged.")]
-        ScoreAlreadyLogged,
-        #[msg("Name too long.")]
-        NameTooLong,
-        #[msg("Invalid prize distribution.")]
-        InvalidPrizeDistribution,
-        #[msg("Invalid entry fee.")]
-        InvalidEntryFee,
-    }
+    GameAlreadyStarted,
+    #[msg("Game not started.")]
+    GameNotStarted,
+    #[msg("Game session expired.")]
+    GameExpired,
+    #[msg("Invalid game key.")]
+    InvalidGameKey,
+    #[msg("Score already logged.")]
+    ScoreAlreadyLogged,
+    #[msg("Name too long.")]
+    NameTooLong,
+    #[msg("Invalid prize distribution.")]
+    InvalidPrizeDistribution,
+    #[msg("Invalid entry fee.")]
+    InvalidEntryFee,
+    #[msg("Unauthorized. Only owner can perform this action.")]
+    Unauthorized,
+}
 
 #[program]
 pub mod bonk_arena {
@@ -62,6 +64,8 @@ pub mod bonk_arena {
         leaderboard.players = Vec::new();
         leaderboard.prize_pool = 0;
         leaderboard.commission_pool = 0;
+        
+        leaderboard.authority = ctx.accounts.payer.key();
         
         Ok(())
     }
@@ -247,6 +251,7 @@ pub struct Leaderboard {
     pub token_mint: Pubkey,          // 游戏代币的 mint 地址
     pub token_pool: Pubkey,          // 游戏代币池地址
     pub owner_token_account: Pubkey, // 合约拥有者的代币账户
+    pub authority: Pubkey,           // 添加 authority 字段
 }
 
 #[account]
@@ -340,8 +345,15 @@ pub struct LogScore<'info> {
 
 #[derive(Accounts)]
 pub struct SetSecretKey<'info> {
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = owner.key() == authority.key() @ ErrorCode::Unauthorized,
+        has_one = authority @ ErrorCode::Unauthorized,
+    )]
     pub leaderboard: Account<'info, Leaderboard>,
+    pub owner: Signer<'info>,
+    /// CHECK: This is the authority that initialized the leaderboard
+    pub authority: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
