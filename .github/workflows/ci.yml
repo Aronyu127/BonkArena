@@ -1,0 +1,64 @@
+name: BonkArena Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  SOLANA_VERSION: 1.18.0
+  ANCHOR_VERSION: 0.29.0
+
+jobs:
+  test:
+    name: Anchor Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+            node_modules/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-node-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Install Solana
+        run: |
+          sh -c "$(curl -sSfL https://release.solana.com/v${{ env.SOLANA_VERSION }}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          solana-keygen new --no-bip39-passphrase
+
+      - name: Install Anchor CLI
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install ${{ env.ANCHOR_VERSION }}
+          avm use ${{ env.ANCHOR_VERSION }}
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build
+        run: anchor build
+
+      - name: Run tests
+        run: |
+          solana-test-validator -r &
+          sleep 6
+          anchor test --skip-local-validator 

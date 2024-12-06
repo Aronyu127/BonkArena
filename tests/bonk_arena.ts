@@ -1,12 +1,12 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { SolanaGameLeaderboard } from "../target/types/solana_game_leaderboard";
+import { BonkArena } from "../target/types/bonk_arena";
 import { TestToken } from "../target/types/test_token";
 import { PublicKey, Keypair, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID, createAssociatedTokenAccount, getAssociatedTokenAddress } from "@solana/spl-token";
 import { expect } from 'chai';
 
-describe("solana_game_leaderboard", () => {
+describe("bonk_arena", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
@@ -211,7 +211,7 @@ describe("solana_game_leaderboard", () => {
 
       // 验证排行榜数据
       expect(Array.isArray(leaderboardAccount.players)).to.be.true;
-      
+
       // 如果有玩家记录，验证玩家数据结构
       if (leaderboardAccount.players.length > 0) {
         const player = leaderboardAccount.players[0];
@@ -289,8 +289,8 @@ describe("solana_game_leaderboard", () => {
 
       // 验证新分数是否被记录
       const hasScore = leaderboardAccount.players.some(
-        player => 
-          player.score === 200 && 
+        player =>
+          player.score === 200 &&
           player.name === "Player: Player2"
       );
       expect(hasScore).to.be.true;

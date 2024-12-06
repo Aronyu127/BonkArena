@@ -24,7 +24,7 @@ pub enum ErrorCode {
     }
 
 #[program]
-pub mod solana_game_leaderboard {
+pub mod bonk_arena {
     use super::*;
 
     pub fn initialize(

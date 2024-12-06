@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "programs/solana_game_leaderboard",
+    "programs/bonk_arena",
     "programs/test_token"
 ]
 resolver = "2"
