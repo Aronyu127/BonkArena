@@ -1,5 +1,8 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount};
+use anchor_spl::{
+    token::{self, Mint, Token, TokenAccount},
+    associated_token::AssociatedToken,
+};
 
 declare_id!("CimnUFrTgq9DoGx9peefTU2bRvkQSMLwra8ZgexZ1WQG");
 
@@ -23,6 +26,10 @@ pub enum ErrorCode {
     InvalidEntryFee,
     #[msg("Unauthorized. Only owner can perform this action.")]
     Unauthorized,
+    #[msg("Player not found in leaderboard.")]
+    PlayerNotInLeaderboard,
+    #[msg("Not eligible for prize.")]
+    NotEligibleForPrize,
 }
 
 #[program]
@@ -70,12 +77,6 @@ pub mod bonk_arena {
         Ok(())
     }
 
-    pub fn set_secret_key(ctx: Context<SetSecretKey>, new_secret_key: [u8; 32]) -> Result<()> {
-        let leaderboard = &mut ctx.accounts.leaderboard;
-        leaderboard.secret_key = new_secret_key;
-        Ok(())
-    }
-
     pub fn start_game(ctx: Context<StartGame>, name: String) -> Result<()> {
         let leaderboard = &mut ctx.accounts.leaderboard;
         let game_session = &mut ctx.accounts.game_session;
@@ -116,8 +117,8 @@ pub mod bonk_arena {
         Ok(())
     }
 
-    pub fn log_score(
-        ctx: Context<LogScore>,
+    pub fn end_game(
+        ctx: Context<EndGame>,
         score: u32,
         submitted_game_key: [u8; 32],
     ) -> Result<()> {
@@ -134,8 +135,7 @@ pub mod bonk_arena {
         // 计算预期的游戏密钥
         let expected_game_key = solana_program::keccak::hashv(&[
             game_session.player_address.as_ref(),
-            game_session.start_time.to_le_bytes().as_ref(),
-            leaderboard.secret_key.as_ref(),
+            game_session.start_time.to_le_bytes().as_ref()
         ]);
 
         // 验证游戏密钥
@@ -154,6 +154,7 @@ pub mod bonk_arena {
             address: game_session.player_address,
             score,
             name: format!("Player: {}", game_session.name),
+            claimed: false,
         });
         leaderboard.players.sort_by(|a, b| b.score.cmp(&a.score));
         if leaderboard.players.len() > 10 {
@@ -166,20 +167,45 @@ pub mod bonk_arena {
         Ok(())
     }
 
-    pub fn end_game(ctx: Context<EndGame>) -> Result<()> {
+    pub fn claim_prize(ctx: Context<ClaimPrize>) -> Result<()> {
         let leaderboard = &mut ctx.accounts.leaderboard;
-        // 奖金分配逻辑
-        distribute_prizes(leaderboard)?;
+        let player_address = ctx.accounts.player.key();
+        
+        // 检查玩家是否在排行榜上
+        let player_rank = leaderboard.players.iter()
+            .position(|p| p.address == player_address)
+            .ok_or(ErrorCode::PlayerNotInLeaderboard)?;
+            
+        // 只有前三名可以领奖
+        if player_rank >= 3 {
+            return Err(ErrorCode::NotEligibleForPrize.into());
+        }
+        
+        // 计算奖金金额
+        let prize_amount = leaderboard.prize_pool * 
+            leaderboard.prize_distribution[player_rank] as u64 / 100;
+            
+        // 转移奖金到玩家账户
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                token::Transfer {
+                    from: ctx.accounts.token_pool.to_account_info(),
+                    to: ctx.accounts.player_token_account.to_account_info(),
+                    authority: leaderboard.to_account_info(),
+                },
+                &[&[
+                    b"leaderboard",
+                    &[leaderboard.bump],
+                ]],
+            ),
+            prize_amount,
+        )?;
 
-        // 清空排行榜
-        leaderboard.players.clear();
-        leaderboard.prize_pool = 0;
+        // 标记该玩家已领奖
+        leaderboard.players[player_rank].claimed = true;
+        
         Ok(())
-    }
-
-    pub fn get_leaderboard(ctx: Context<GetLeaderboard>) -> Result<Vec<Player>> {
-        let leaderboard = &ctx.accounts.leaderboard;
-        Ok(leaderboard.players.clone())
     }
 
     pub fn add_prize_pool(ctx: Context<AddPrizePool>, amount: u64) -> Result<()> {
@@ -205,40 +231,17 @@ pub mod bonk_arena {
     }
 }
 
-// 工具函数：分配奖金
-fn distribute_prizes(leaderboard: &mut Account<Leaderboard>) -> Result<()> {
-    let total_prize = leaderboard.prize_pool;
-    let prize_distribution = leaderboard.prize_distribution;
-    
-    // 计算实际获奖玩家数量（最多3名）
-    let winner_count = leaderboard.players.len().min(3);
-    
-    // 分配奖金给实际获奖玩家
-    for i in 0..winner_count {
-        let _prize = total_prize * prize_distribution[i] as u64 / 100;
-        // TODO: 奖金转账逻辑给玩家
-    }
-    
-    // 如果获奖玩家少于3名，剩余奖金转给合约拥有者
-    if winner_count < 3 {
-        let mut _remaining_prize = 0;
-        for i in winner_count..3 {
-            _remaining_prize += total_prize * prize_distribution[i] as u64 / 100;
-        }
-        // TODO: 将剩余奖金转给合约拥有者
-    }
-    
-    Ok(())
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace)]
 pub struct Player {
     pub address: Pubkey,
     pub score: u32,
+    #[max_len(10)]
     pub name: String,
+    pub claimed: bool,
 }
 
 #[account]
+#[derive(InitSpace)]
 pub struct Leaderboard {
     pub entry_fee: u64,              // 参赛费
     pub prize_ratio: u8,             // 奖金池比例
@@ -246,12 +249,13 @@ pub struct Leaderboard {
     pub prize_pool: u64,             // 奖金池
     pub commission_pool: u64,        // 抽成池
     pub prize_distribution: [u8; 3], // 前三名分配比例
+    #[max_len(10)]
     pub players: Vec<Player>,        // 排行榜
-    pub secret_key: [u8; 32],        // 合约拥有者的 secret key
     pub token_mint: Pubkey,          // 游戏代币的 mint 地址
     pub token_pool: Pubkey,          // 游戏代币池地址
     pub owner_token_account: Pubkey, // 合约拥有者的代币账户
     pub authority: Pubkey,           // 添加 authority 字段
+    pub bump: u8,                    // PDA bump
 }
 
 #[account]
@@ -268,20 +272,26 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = payer,
-        space = 8 + 8 + 1 + 1 + 8 + 8 + 3 + (4 + 10 * (32 + 8 + 50)) + 32 + 32 + 32 + 32
+        space = 8 + Leaderboard::INIT_SPACE,
+        seeds = [b"leaderboard"],
+        bump
     )]
     pub leaderboard: Account<'info, Leaderboard>,
+    #[account(
+        init,
+        payer = payer,
+        associated_token::mint = token_mint,
+        associated_token::authority = leaderboard
+    )]
+    pub token_pool: Account<'info, TokenAccount>,
     #[account(mut)]
     pub payer: Signer<'info>,
-    pub token_mint: Account<'info, Mint>,
     /// CHECK: 这是一个代币池账户，会在初始化时创建
-    #[account(mut)]
-    pub token_pool: UncheckedAccount<'info>,
-    /// CHECK: 这是合约拥有者的代币账户
-    pub owner_token_account: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+    pub token_mint: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
-    pub rent: Sysvar<'info, Rent>,
+    pub owner_token_account: Account<'info, TokenAccount>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 #[derive(Accounts)]
@@ -299,17 +309,16 @@ pub struct StartGame<'info> {
     pub game_session: Account<'info, GameSession>,
     #[account(
         mut,
-        token::mint = token_mint,
+        token::mint = leaderboard.token_mint,
         token::authority = payer
     )]
     pub payer_token_account: Account<'info, TokenAccount>,
     #[account(
         mut,
-        token::mint = token_mint,
+        token::mint = leaderboard.token_mint,
         token::authority = leaderboard
     )]
     pub token_pool: Account<'info, TokenAccount>,
-    pub token_mint: Account<'info, Mint>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub system_program: Program<'info, System>,
@@ -317,10 +326,14 @@ pub struct StartGame<'info> {
 }
 
 #[derive(Accounts)]
-pub struct EndGame<'info> {
+pub struct CloseRank<'info> {
     #[account(mut)]
     pub leaderboard: Account<'info, Leaderboard>,
-    #[account(mut)]
+    #[account(
+        mut,
+        token::mint = leaderboard.token_mint,
+        token::authority = leaderboard
+    )]
     pub token_pool: Account<'info, TokenAccount>,
     #[account(mut)]
     pub owner_token_account: Account<'info, TokenAccount>,
@@ -328,7 +341,7 @@ pub struct EndGame<'info> {
 }
 
 #[derive(Accounts)]
-pub struct LogScore<'info> {
+pub struct EndGame<'info> {
     #[account(mut)]
     pub leaderboard: Account<'info, Leaderboard>,
     #[account(
@@ -344,24 +357,6 @@ pub struct LogScore<'info> {
 }
 
 #[derive(Accounts)]
-pub struct SetSecretKey<'info> {
-    #[account(
-        mut,
-        constraint = owner.key() == authority.key() @ ErrorCode::Unauthorized,
-        has_one = authority @ ErrorCode::Unauthorized,
-    )]
-    pub leaderboard: Account<'info, Leaderboard>,
-    pub owner: Signer<'info>,
-    /// CHECK: This is the authority that initialized the leaderboard
-    pub authority: UncheckedAccount<'info>,
-}
-
-#[derive(Accounts)]
-pub struct GetLeaderboard<'info> {
-    pub leaderboard: Account<'info, Leaderboard>,
-}
-
-#[derive(Accounts)]
 pub struct AddPrizePool<'info> {
     #[account(mut)]
     pub leaderboard: Account<'info, Leaderboard>,
@@ -373,11 +368,31 @@ pub struct AddPrizePool<'info> {
     pub contributor_token_account: Account<'info, TokenAccount>,
     #[account(
         mut,
-        address = leaderboard.token_pool,
         token::mint = leaderboard.token_mint,
+        token::authority = leaderboard
     )]
     pub token_pool: Account<'info, TokenAccount>,
     #[account(mut)]
     pub contributor: Signer<'info>,
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimPrize<'info> {
+    #[account(mut)]
+    pub leaderboard: Account<'info, Leaderboard>,
+    #[account(
+        mut,
+        token::mint = leaderboard.token_mint,
+        token::authority = leaderboard
+    )]
+    pub token_pool: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        token::mint = leaderboard.token_mint,
+        token::authority = player
+    )]
+    pub player_token_account: Account<'info, TokenAccount>,
+    pub player: Signer<'info>,
     pub token_program: Program<'info, Token>,
 }
