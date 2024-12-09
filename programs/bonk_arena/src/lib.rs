@@ -4,7 +4,7 @@ use anchor_spl::{
     associated_token::AssociatedToken,
 };
 
-declare_id!("CimnUFrTgq9DoGx9peefTU2bRvkQSMLwra8ZgexZ1WQG");
+declare_id!("2unYtsTQXE8zSsFhYEZe77DLUDX4ba53vhzjAtNGUjhN");
 
 #[error_code]
 pub enum ErrorCode {
@@ -40,13 +40,12 @@ pub mod bonk_arena {
         ctx: Context<Initialize>,
         entry_fee: u64,
         prize_ratio: u8,
-        commission_ratio: u8,
         prize_distribution: [u8; 3],
     ) -> Result<()> {
         let leaderboard = &mut ctx.accounts.leaderboard;
         
-        // 验证费率总和
-        if prize_ratio + commission_ratio != 100 {
+        // Verify prize ratio is less than 100 and commission ratio is the remainder
+        if prize_ratio >= 100 {
             return Err(ErrorCode::InvalidEntryFee.into());
         }
         
@@ -59,7 +58,7 @@ pub mod bonk_arena {
         // 基本参数设置
         leaderboard.entry_fee = entry_fee;
         leaderboard.prize_ratio = prize_ratio;
-        leaderboard.commission_ratio = commission_ratio;
+        leaderboard.commission_ratio = 100 - prize_ratio;
         leaderboard.prize_distribution = prize_distribution;
 
         // BONK 相关设置
@@ -74,6 +73,12 @@ pub mod bonk_arena {
         
         leaderboard.authority = ctx.accounts.payer.key();
         
+        Ok(())
+    }
+
+    pub fn set_token_pool(ctx: Context<SetTokenPool>) -> Result<()> {
+        let leaderboard = &mut ctx.accounts.leaderboard;
+        leaderboard.token_pool = ctx.accounts.token_pool.key();
         Ok(())
     }
 
@@ -120,7 +125,7 @@ pub mod bonk_arena {
     pub fn end_game(
         ctx: Context<EndGame>,
         score: u32,
-        submitted_game_key: [u8; 32],
+        // submitted_game_key: [u8; 32],
     ) -> Result<()> {
         let leaderboard = &mut ctx.accounts.leaderboard;
         let game_session = &mut ctx.accounts.game_session;
@@ -133,21 +138,20 @@ pub mod bonk_arena {
         }
 
         // 计算预期的游戏密钥
-        let expected_game_key = solana_program::keccak::hashv(&[
-            game_session.player_address.as_ref(),
-            game_session.start_time.to_le_bytes().as_ref()
-        ]);
-
-        // 验证游戏密钥
-        if expected_game_key.to_bytes() != submitted_game_key {
-            game_session.game_completed = true;
-            return Err(ErrorCode::InvalidGameKey.into());
-        }
+        // let expected_game_key = solana_program::keccak::hashv(&[
+        //     game_session.player_address.as_ref(),
+        //     game_session.start_time.to_le_bytes().as_ref()
+        // ]);
 
         // 验证游戏是否已完成
         if game_session.game_completed {
             return Err(ErrorCode::ScoreAlreadyLogged.into());
         }
+        // 验证游戏密钥
+        // if expected_game_key.to_bytes() != submitted_game_key {
+            // return Err(ErrorCode::InvalidGameKey.into());
+        // }
+
 
         // 登录分数
         leaderboard.players.push(Player {
@@ -286,12 +290,11 @@ pub struct Initialize<'info> {
     pub token_pool: Account<'info, TokenAccount>,
     #[account(mut)]
     pub payer: Signer<'info>,
-    /// CHECK: 这是一个代币池账户，会在初始化时创建
-    pub system_program: Program<'info, System>,
     pub token_mint: Account<'info, Mint>,
     pub token_program: Program<'info, Token>,
     pub owner_token_account: Account<'info, TokenAccount>,
     pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -395,4 +398,23 @@ pub struct ClaimPrize<'info> {
     pub player_token_account: Account<'info, TokenAccount>,
     pub player: Signer<'info>,
     pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct SetTokenPool<'info> {
+    #[account(mut)]
+    pub leaderboard: Account<'info, Leaderboard>,
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = token_mint,
+        associated_token::authority = leaderboard
+    )]
+    pub token_pool: Account<'info, TokenAccount>,
+    pub token_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
