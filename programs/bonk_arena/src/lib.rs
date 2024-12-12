@@ -151,14 +151,23 @@ pub mod bonk_arena {
             // return Err(ErrorCode::InvalidGameKey.into());
         // }
 
-
         // 登录分数
-        leaderboard.players.push(Player {
-            address: game_session.player_address,
-            score,
-            name: format!("Player: {}", game_session.name),
-            claimed: false,
-        });
+        // Check if player already exists in leaderboard
+        if let Some(existing_player) = leaderboard.players.iter_mut()
+            .find(|p| p.address == game_session.player_address) {
+            if score > existing_player.score {
+                existing_player.score = score;
+                existing_player.name = game_session.name.to_string();
+            }
+        } else {
+            // Add new player if not found
+            leaderboard.players.push(Player {
+                address: game_session.player_address,
+                score,
+                name: game_session.name.to_string(),
+                claimed: false,
+            });
+        }
         leaderboard.players.sort_by(|a, b| b.score.cmp(&a.score));
         if leaderboard.players.len() > 10 {
             leaderboard.players.pop();
@@ -205,6 +214,7 @@ pub mod bonk_arena {
             prize_amount,
         )?;
 
+        leaderboard.prize_pool = leaderboard.prize_pool.saturating_sub(prize_amount);
         // 标记该玩家已领奖
         leaderboard.players[player_rank].claimed = true;
         
