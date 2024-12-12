@@ -63,14 +63,13 @@ pub mod bonk_arena {
 
         // BONK 相关设置
         leaderboard.token_mint = ctx.accounts.token_mint.key();
-        leaderboard.token_pool = ctx.accounts.token_pool.key();
         leaderboard.owner_token_account = ctx.accounts.owner_token_account.key();
 
         // 初始化其他字段
         leaderboard.players = Vec::new();
         leaderboard.prize_pool = 0;
         leaderboard.commission_pool = 0;
-        
+        leaderboard.bump = ctx.bumps.leaderboard;
         leaderboard.authority = ctx.accounts.payer.key();
         
         Ok(())
@@ -281,13 +280,6 @@ pub struct Initialize<'info> {
         bump
     )]
     pub leaderboard: Account<'info, Leaderboard>,
-    #[account(
-        init,
-        payer = payer,
-        associated_token::mint = token_mint,
-        associated_token::authority = leaderboard
-    )]
-    pub token_pool: Account<'info, TokenAccount>,
     #[account(mut)]
     pub payer: Signer<'info>,
     pub token_mint: Account<'info, Mint>,
