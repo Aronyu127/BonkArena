@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "programs/bonk_arena",
-    "programs/test_token"
 ]
 resolver = "2"
 

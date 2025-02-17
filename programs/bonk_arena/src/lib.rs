@@ -4,7 +4,7 @@ use anchor_spl::{
     associated_token::AssociatedToken,
 };
 
-declare_id!("2unYtsTQXE8zSsFhYEZe77DLUDX4ba53vhzjAtNGUjhN");
+declare_id!("CimnUFrTgq9DoGx9peefTU2bRvkQSMLwra8ZgexZ1WQG");
 
 #[error_code]
 pub enum ErrorCode {
@@ -214,6 +214,7 @@ pub mod bonk_arena {
             prize_amount,
         )?;
 
+        // Decrease prize pool amount
         leaderboard.prize_pool = leaderboard.prize_pool.saturating_sub(prize_amount);
         // 标记该玩家已领奖
         leaderboard.players[player_rank].claimed = true;
@@ -248,7 +249,7 @@ pub mod bonk_arena {
 pub struct Player {
     pub address: Pubkey,
     pub score: u32,
-    #[max_len(10)]
+    #[max_len(40)]
     pub name: String,
     pub claimed: bool,
 }
@@ -272,8 +273,10 @@ pub struct Leaderboard {
 }
 
 #[account]
+#[derive(InitSpace)]
 pub struct GameSession {
     pub player_address: Pubkey,    // 玩家地址
+    #[max_len(40)]
     pub name: String,              // 玩家名称
     pub start_time: i64,           // 开始时间
     pub game_completed: bool,      // 游戏是否完成
@@ -307,7 +310,7 @@ pub struct StartGame<'info> {
     #[account(
         init_if_needed,
         payer = payer,
-        space = 8 + 32 + 50 + 8 + 32 + 1 + 1,
+        space = 8 + GameSession::INIT_SPACE,
         seeds = [b"player_session", payer.key().as_ref()],
         bump
     )]
